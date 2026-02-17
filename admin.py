@@ -355,3 +355,14 @@ async def list_giveaways(message: Message) -> None:
         f"Рассылок всего: {stats['broadcasts_total']}"
     )
     await message.answer(text, reply_markup=admin_root_kb())
+
+
+@router.message(lambda m: bool(m.photo))
+async def admin_photo_fallback(message: Message, state: FSMContext) -> None:
+    current = await state.get_state()
+    if current == NewGiveaway.post_photo.state:
+        return
+    await message.answer(
+        "Нет активного шага загрузки фото. "
+        "Если бот перезапускался, начните заново: /new"
+    )
