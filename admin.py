@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import logging
 
 from aiogram import Router
 from aiogram.filters import Command
@@ -13,6 +14,7 @@ from app.keyboards import winners_mode_kb, publish_post_kb, admin_root_kb
 
 router = Router()
 router.message.filter(AdminFilter())
+logger = logging.getLogger(__name__)
 
 
 class NewGiveaway(StatesGroup):
@@ -241,51 +243,59 @@ async def new_giveaway_post_photo(message: Message, state: FSMContext) -> None:
 
 @router.message(NewGiveaway.post_button)
 async def new_giveaway_post_button(message: Message, state: FSMContext) -> None:
-    data = await state.get_data()
-    giveaway_id = data.get("giveaway_id")
-    deep_link = data.get("deep_link")
-    post_text = data.get("post_text")
-    post_photo = data.get("post_photo")
-    channel_username = data.get("channel_username")
-    button_text = _safe_input_text(message)
-    if not button_text:
-        await message.answer("Введите текст кнопки:")
-        return
-    if not all([giveaway_id, deep_link, post_text, post_photo, button_text]):
-        await message.answer("Не удалось подготовить пост. Попробуйте ещё раз.")
-        await state.clear()
-        return
-    if not channel_username:
-        from app.services.giveaways import get_giveaway
-        giveaway = await get_giveaway(giveaway_id)
-        channel_username = giveaway.channel_username if giveaway else None
-    if not channel_username:
-        await message.answer("Не удалось определить канал для публикации.")
-        await state.clear()
-        return
-
-    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-    from app.services.sender import send_photo_limited
-
-    kb = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=button_text, url=deep_link)]
-        ]
-    )
-    from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
-
     try:
-        await send_photo_limited(
-            message.bot,
-            chat_id=channel_username,
-            photo=post_photo,
-            caption=post_text,
-            reply_markup=kb,
+        data = await state.get_data()
+        giveaway_id = data.get("giveaway_id")
+        deep_link = data.get("deep_link")
+        post_text = data.get("post_text")
+        post_photo = data.get("post_photo")
+        channel_username = data.get("channel_username")
+        button_text = _safe_input_text(message)
+        if not button_text:
+            await message.answer("Введите текст кнопки:")
+            return
+        if len(button_text) > 64:
+            await message.answer("Текст кнопки слишком длинный. Максимум 64 символа:")
+            return
+        if not all([giveaway_id, deep_link, post_text, post_photo, button_text]):
+            await message.answer("Не удалось подготовить пост. Попробуйте ещё раз.")
+            await state.clear()
+            return
+        if not channel_username:
+            from app.services.giveaways import get_giveaway
+            giveaway = await get_giveaway(giveaway_id)
+            channel_username = giveaway.channel_username if giveaway else None
+        if not channel_username:
+            await message.answer("Не удалось определить канал для публикации.")
+            await state.clear()
+            return
+
+        from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+        from app.services.sender import send_photo_limited
+        from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
+
+        kb = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(text=button_text, url=deep_link)]
+            ]
         )
-        await message.answer("Пост опубликован.")
-    except (TelegramBadRequest, TelegramForbiddenError):
-        await message.answer("Не удалось опубликовать пост. Проверьте, что бот админ в канале и канал доступен.")
-    await state.clear()
+
+        try:
+            await send_photo_limited(
+                message.bot,
+                chat_id=channel_username,
+                photo=post_photo,
+                caption=post_text,
+                reply_markup=kb,
+            )
+            await message.answer("Пост опубликован.")
+        except (TelegramBadRequest, TelegramForbiddenError):
+            await message.answer("Не удалось опубликовать пост. Проверьте, что бот админ в канале и канал доступен.")
+    except Exception as exc:
+        logger.exception("Failed to publish channel post: %s", exc)
+        await message.answer("Ошибка при публикации поста. Попробуйте ещё раз командой /new.")
+    finally:
+        await state.clear()
 
 
 @router.message(EditGiveaway.field)
